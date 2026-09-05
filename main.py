@@ -9,11 +9,14 @@ from scipy.integrate import solve_ivp
 
 mu_max = 0.40   # Maximum specific growth rate [1/h]
 K_s = 0.50      # Monod half-saturation constant [g/L]
-Y_xs = 0.50     # Biomass yield on substrate [g biomass / g substrate]
+Y_xs = 0.50     # Biomass yield on substrate [g biomass/g substrate]
 k_d = 0.01      # Biomass decay coefficient [1/h]
 
-F = 0.10        # Feed flow rate [L/h]
 S_f = 200.0     # Substrate concentration in feed [g/L]
+
+# Feed strategy
+t_feed = 12.0       # Time at which feeding begins [h]
+mu_target = 0.20    # Desired specific growth rate during feeding [1/h]
 
 
 # ============================================================
@@ -26,18 +29,19 @@ def monod_growth(S, mu_max, K_s):
 
 
 # ============================================================
-# BATCH MODEL
+# FEED STRATEGY
 # ============================================================
 
-def batch_model(t, y):
-    X, S = y
+def feed_rate(t, X, V):
 
-    mu = monod_growth(S, mu_max, K_s)
+    # Batch phase: no feed
+    if t < t_feed:
+        return 0.0
 
-    dXdt = (mu - k_d) * X
-    dSdt = -(mu * X) / Y_xs
+    # Model-based feed required to support mu_target
+    F = (mu_target * X * V) / (Y_xs * S_f)
 
-    return [dXdt, dSdt]
+    return F
 
 
 # ============================================================
@@ -47,13 +51,16 @@ def batch_model(t, y):
 def fed_batch_model(t, y):
     X, S, V = y
 
-    # Current microbial growth rate
+    # Specific microbial growth rate
     mu = monod_growth(S, mu_max, K_s)
+
+    # Current feed rate
+    F = feed_rate(t, X, V)
 
     # Current dilution rate
     D = F / V
 
-    # Dynamic mass balances
+    # Dynamic balances
     dXdt = (mu - k_d - D) * X
 
     dSdt = (
@@ -95,7 +102,9 @@ solution = solve_ivp(
     fed_batch_model,
     [t_start, t_end],
     y0,
-    t_eval=t_eval
+    t_eval=t_eval,
+    rtol=1e-7,
+    atol=1e-9
 )
 
 
@@ -111,26 +120,38 @@ V = solution.y[2]
 
 
 # ============================================================
+# RECONSTRUCT FEED AND DILUTION PROFILES
+# ============================================================
+
+F_profile = np.array([
+    feed_rate(t, x, v)
+    for t, x, v in zip(time, X, V)
+])
+
+D_profile = F_profile / V
+
+
+# ============================================================
 # CALCULATE TOTAL MASSES
 # ============================================================
 
-# Concentration [g/L] * volume [L] = total mass [g]
 biomass_mass = X * V
 substrate_mass = S * V
 
 initial_biomass_mass = X0 * V0
 initial_substrate_mass = S0 * V0
 
-# Substrate added through the feed
-feed_substrate_mass = F * S_f * t_end
+# Feed is now time-varying, so integrate F(t)*Sf over time
+feed_substrate_mass = np.trapezoid(
+    F_profile * S_f,
+    time
+)
 
-# Total substrate ever supplied to the reactor
 total_substrate_supplied = (
     initial_substrate_mass
     + feed_substrate_mass
 )
 
-# Substrate consumed by the cells
 substrate_consumed = (
     total_substrate_supplied
     - substrate_mass[-1]
@@ -138,20 +159,7 @@ substrate_consumed = (
 
 
 # ============================================================
-# VALIDATION
-# ============================================================
-
-# Because F is constant:
-# V(t) = V0 + F*t
-expected_final_volume = V0 + F * t_end
-
-volume_error = (
-    V[-1] - expected_final_volume
-)
-
-
-# ============================================================
-# PRINT PROCESS SUMMARY
+# PROCESS SUMMARY
 # ============================================================
 
 print("\n--- FED-BATCH PROCESS SUMMARY ---")
@@ -159,22 +167,21 @@ print("\n--- FED-BATCH PROCESS SUMMARY ---")
 print("Solver successful:", solution.success)
 
 print("\nConcentrations:")
-print("Final biomass concentration:", X[-1], "g/L")
-print("Final substrate concentration:", S[-1], "g/L")
+print(f"Final biomass concentration: {X[-1]:.2f} g/L")
+print(f"Final substrate concentration: {S[-1]:.3f} g/L")
 
 print("\nReactor:")
-print("Final volume:", V[-1], "L")
-print("Expected final volume:", expected_final_volume, "L")
-print("Volume error:", volume_error, "L")
+print(f"Final volume: {V[-1]:.2f} L")
+print(f"Final feed rate: {F_profile[-1]:.3f} L/h")
 
 print("\nMass balance:")
-print("Initial biomass mass:", initial_biomass_mass, "g")
-print("Final biomass mass:", biomass_mass[-1], "g")
-print("Initial substrate mass:", initial_substrate_mass, "g")
-print("Feed substrate mass:", feed_substrate_mass, "g")
-print("Total substrate supplied:", total_substrate_supplied, "g")
-print("Final substrate mass:", substrate_mass[-1], "g")
-print("Substrate consumed:", substrate_consumed, "g")
+print(f"Initial biomass mass: {initial_biomass_mass:.2f} g")
+print(f"Final biomass mass: {biomass_mass[-1]:.2f} g")
+print(f"Initial substrate mass: {initial_substrate_mass:.2f} g")
+print(f"Feed substrate mass: {feed_substrate_mass:.2f} g")
+print(f"Total substrate supplied: {total_substrate_supplied:.2f} g")
+print(f"Final substrate mass: {substrate_mass[-1]:.2f} g")
+print(f"Substrate consumed: {substrate_consumed:.2f} g")
 
 
 # ============================================================
@@ -186,15 +193,49 @@ plt.figure()
 plt.plot(time, X, label="Biomass, X")
 plt.plot(time, S, label="Substrate, S")
 
+plt.axvline(
+    t_feed,
+    linestyle="--",
+    label="Feed start"
+)
+
 plt.xlabel("Time [h]")
 plt.ylabel("Concentration [g/L]")
-plt.title("Fed-Batch Bioreactor")
+plt.title("Model-Based Fed-Batch Bioreactor")
 
 plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/fed_batch_concentrations.png",
+    "Images/model_based_concentrations.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
+
+
+# ============================================================
+# PLOT FEED RATE
+# ============================================================
+
+plt.figure()
+
+plt.plot(time, F_profile)
+
+plt.axvline(
+    t_feed,
+    linestyle="--"
+)
+
+plt.xlabel("Time [h]")
+plt.ylabel("Feed Rate [L/h]")
+plt.title("Model-Based Feed Profile")
+
+plt.grid()
+
+plt.savefig(
+    "Images/model_based_feed.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -212,12 +253,12 @@ plt.plot(time, V)
 
 plt.xlabel("Time [h]")
 plt.ylabel("Reactor Volume [L]")
-plt.title("Fed-Batch Reactor Volume")
+plt.title("Reactor Volume")
 
 plt.grid()
 
 plt.savefig(
-    "Images/fed_batch_volume.png",
+    "Images/model_based_volume.png",
     dpi=300,
     bbox_inches="tight"
 )
