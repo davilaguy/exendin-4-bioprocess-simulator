@@ -14,9 +14,25 @@ k_d = 0.01      # Biomass decay coefficient [1/h]
 
 S_f = 200.0     # Substrate concentration in feed [g/L]
 
-# Feed strategy
-t_feed = 12.0       # Time at which feeding begins [h]
-mu_target = 0.20    # Desired specific growth rate during feeding [1/h]
+
+# ============================================================
+# FEED STRATEGY PARAMETERS
+# ============================================================
+
+t_feed = 12.0       # Feed start time [h]
+mu_target = 0.20    # Target specific growth rate [1/h]
+
+
+# ============================================================
+# PRODUCT FORMATION PARAMETERS
+# ============================================================
+
+t_induction = 18.0  # Peptide-production induction time [h]
+
+alpha = 0.20        # Growth-associated coefficient [mg product/g biomass]
+beta = 0.05         # Non-growth-associated production [mg/(g biomass*h)]
+
+k_p = 0.01          # Product degradation coefficient [1/h]
 
 
 # ============================================================
@@ -34,43 +50,72 @@ def monod_growth(S, mu_max, K_s):
 
 def feed_rate(t, X, V):
 
-    # Batch phase: no feed
+    # Initial batch phase
     if t < t_feed:
         return 0.0
 
-    # Model-based feed required to support mu_target
+    # Model-based feed designed around target growth rate
     F = (mu_target * X * V) / (Y_xs * S_f)
 
     return F
 
 
 # ============================================================
-# FED-BATCH MODEL
+# PRODUCT FORMATION
+# ============================================================
+
+def product_rate(t, mu):
+
+    # No recombinant peptide production before induction
+    if t < t_induction:
+        return 0.0
+
+    # Luedeking-Piret-type production model
+    q_p = alpha * mu + beta
+
+    return q_p
+
+
+# ============================================================
+# FED-BATCH BIOREACTOR MODEL
 # ============================================================
 
 def fed_batch_model(t, y):
-    X, S, V = y
 
-    # Specific microbial growth rate
+    X, S, P, V = y
+
+    # Microbial growth
     mu = monod_growth(S, mu_max, K_s)
 
-    # Current feed rate
+    # Feed rate
     F = feed_rate(t, X, V)
 
-    # Current dilution rate
+    # Dilution rate
     D = F / V
 
-    # Dynamic balances
+    # Specific product formation rate
+    q_p = product_rate(t, mu)
+
+    # Biomass balance
     dXdt = (mu - k_d - D) * X
 
+    # Substrate balance
     dSdt = (
         D * (S_f - S)
         - (mu * X) / Y_xs
     )
 
+    # Therapeutic peptide balance
+    dPdt = (
+        q_p * X
+        - D * P
+        - k_p * P
+    )
+
+    # Reactor volume balance
     dVdt = F
 
-    return [dXdt, dSdt, dVdt]
+    return [dXdt, dSdt, dPdt, dVdt]
 
 
 # ============================================================
@@ -79,9 +124,10 @@ def fed_batch_model(t, y):
 
 X0 = 0.10      # Initial biomass concentration [g/L]
 S0 = 20.0      # Initial substrate concentration [g/L]
+P0 = 0.0       # Initial product concentration [mg/L]
 V0 = 2.0       # Initial reactor volume [L]
 
-y0 = [X0, S0, V0]
+y0 = [X0, S0, P0, V0]
 
 
 # ============================================================
@@ -116,11 +162,12 @@ time = solution.t
 
 X = solution.y[0]
 S = solution.y[1]
-V = solution.y[2]
+P = solution.y[2]
+V = solution.y[3]
 
 
 # ============================================================
-# RECONSTRUCT FEED AND DILUTION PROFILES
+# RECONSTRUCT OPERATING PROFILES
 # ============================================================
 
 F_profile = np.array([
@@ -131,17 +178,31 @@ F_profile = np.array([
 D_profile = F_profile / V
 
 
+mu_profile = np.array([
+    monod_growth(s, mu_max, K_s)
+    for s in S
+])
+
+
+q_p_profile = np.array([
+    product_rate(t, mu)
+    for t, mu in zip(time, mu_profile)
+])
+
+
 # ============================================================
-# CALCULATE TOTAL MASSES
+# MASS CALCULATIONS
 # ============================================================
 
 biomass_mass = X * V
 substrate_mass = S * V
 
+# P is mg/L and V is L, therefore product mass is mg
+product_mass = P * V
+
 initial_biomass_mass = X0 * V0
 initial_substrate_mass = S0 * V0
 
-# Feed is now time-varying, so integrate F(t)*Sf over time
 feed_substrate_mass = np.trapezoid(
     F_profile * S_f,
     time
@@ -159,33 +220,55 @@ substrate_consumed = (
 
 
 # ============================================================
+# PRODUCTIVITY METRICS
+# ============================================================
+
+final_product_mass = product_mass[-1]
+
+overall_productivity = (
+    final_product_mass / t_end
+)
+
+production_time = (
+    t_end - t_induction
+)
+
+production_phase_productivity = (
+    final_product_mass / production_time
+)
+
+
+# ============================================================
 # PROCESS SUMMARY
 # ============================================================
 
-print("\n--- FED-BATCH PROCESS SUMMARY ---")
+print("\n--- VENOM-DERIVED PEPTIDE BIOPROCESS ---")
 
 print("Solver successful:", solution.success)
 
-print("\nConcentrations:")
-print(f"Final biomass concentration: {X[-1]:.2f} g/L")
-print(f"Final substrate concentration: {S[-1]:.3f} g/L")
+print("\nFinal reactor state:")
+print(f"Biomass concentration: {X[-1]:.2f} g/L")
+print(f"Substrate concentration: {S[-1]:.3f} g/L")
+print(f"Peptide concentration: {P[-1]:.2f} mg/L")
+print(f"Reactor volume: {V[-1]:.2f} L")
 
-print("\nReactor:")
-print(f"Final volume: {V[-1]:.2f} L")
-print(f"Final feed rate: {F_profile[-1]:.3f} L/h")
-
-print("\nMass balance:")
-print(f"Initial biomass mass: {initial_biomass_mass:.2f} g")
+print("\nBiomass and substrate:")
 print(f"Final biomass mass: {biomass_mass[-1]:.2f} g")
-print(f"Initial substrate mass: {initial_substrate_mass:.2f} g")
-print(f"Feed substrate mass: {feed_substrate_mass:.2f} g")
-print(f"Total substrate supplied: {total_substrate_supplied:.2f} g")
-print(f"Final substrate mass: {substrate_mass[-1]:.2f} g")
+print(f"Substrate supplied: {total_substrate_supplied:.2f} g")
 print(f"Substrate consumed: {substrate_consumed:.2f} g")
+
+print("\nTherapeutic peptide:")
+print(f"Induction time: {t_induction:.1f} h")
+print(f"Final peptide mass: {final_product_mass:.2f} mg")
+print(f"Overall productivity: {overall_productivity:.2f} mg/h")
+print(
+    f"Production-phase productivity: "
+    f"{production_phase_productivity:.2f} mg/h"
+)
 
 
 # ============================================================
-# PLOT CONCENTRATIONS
+# BIOMASS AND SUBSTRATE PLOT
 # ============================================================
 
 plt.figure()
@@ -199,15 +282,21 @@ plt.axvline(
     label="Feed start"
 )
 
+plt.axvline(
+    t_induction,
+    linestyle=":",
+    label="Induction"
+)
+
 plt.xlabel("Time [h]")
 plt.ylabel("Concentration [g/L]")
-plt.title("Model-Based Fed-Batch Bioreactor")
+plt.title("Fed-Batch Biomass and Substrate")
 
 plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/model_based_concentrations.png",
+    "Images/biomass_substrate_induction.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -216,7 +305,37 @@ plt.show()
 
 
 # ============================================================
-# PLOT FEED RATE
+# THERAPEUTIC PEPTIDE PLOT
+# ============================================================
+
+plt.figure()
+
+plt.plot(time, P)
+
+plt.axvline(
+    t_induction,
+    linestyle="--",
+    label="Induction"
+)
+
+plt.xlabel("Time [h]")
+plt.ylabel("Peptide Concentration [mg/L]")
+plt.title("Recombinant Therapeutic Peptide Production")
+
+plt.legend()
+plt.grid()
+
+plt.savefig(
+    "Images/therapeutic_peptide_production.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
+
+
+# ============================================================
+# FEED PROFILE
 # ============================================================
 
 plt.figure()
@@ -236,29 +355,6 @@ plt.grid()
 
 plt.savefig(
     "Images/model_based_feed.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.show()
-
-
-# ============================================================
-# PLOT REACTOR VOLUME
-# ============================================================
-
-plt.figure()
-
-plt.plot(time, V)
-
-plt.xlabel("Time [h]")
-plt.ylabel("Reactor Volume [L]")
-plt.title("Reactor Volume")
-
-plt.grid()
-
-plt.savefig(
-    "Images/model_based_volume.png",
     dpi=300,
     bbox_inches="tight"
 )
