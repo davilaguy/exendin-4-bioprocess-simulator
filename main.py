@@ -5,76 +5,125 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 
 
-# Literature-informed growth parameters
+# Growth parameters
 
-mu_g_max = 0.177      # Maximum growth rate on glycerol [1/h]
-mu_m_max = 0.070      # Maximum growth rate on methanol [1/h]
+mu_g_max = 0.177
+mu_m_max = 0.070
 
-Y_xg = 0.40           # Biomass yield on glycerol [g biomass/g glycerol]
-Y_xm = 0.55           # Biomass yield on methanol [g biomass/g methanol]
+Y_xg = 0.40
+Y_xm = 0.55
 
-G_feed = 1260.0       # Glycerol concentration in feed [g/L]
-M_feed = 792.0        # Methanol concentration in feed [g/L]
+G_feed = 1260.0
+M_feed = 792.0
 
-k_d = 0.01            # Biomass decay coefficient [1/h]
+k_d = 0.01
 
 
-# Substrate kinetic parameters
+# Substrate kinetics
 
-K_g = 0.50            # Glycerol half-saturation constant [g/L]
+K_g = 0.50
 
-K_m = 0.10            # Methanol kinetic constant [g/L]
-M_inhibition_peak = 3.65   # Approximate methanol inhibition region [g/L]
+K_m = 0.10
+M_inhibition_peak = 3.65
 
 K_i_m = M_inhibition_peak**2 / K_m
 
 
-# Process schedule
+# Process timing
 
-t_glycerol_feed_start = 32.0   # Start glycerol fed-batch [h]
-t_glycerol_feed_end = 46.0     # Stop glycerol feed [h]
+t_glycerol_feed_start = 32.0
+t_glycerol_feed_end = 46.0
+t_methanol_start = 48.0
 
-t_methanol_start = 48.0        # Start methanol induction [h]
-
-mu_g_target = 0.14             # Target growth rate during glycerol feeding [1/h]
-mu_m_target = 0.015            # Target growth rate during methanol feeding [1/h]
-
-
-# Exendin-4 production parameters
-
-Y_p_m = 4.70          # Product formation calibration factor [mg product/g methanol]
-K_g_repression = 0.10 # Glycerol repression parameter [g/L]
-k_p = 0.005           # Product degradation coefficient [1/h]
+mu_g_target = 0.14
+mu_m_target = 0.015
 
 
-# Oxygen-transfer parameters
+# Exendin-4 production
 
-C_star = 0.20         # Saturated dissolved oxygen concentration [mmol/L]
-K_o = 0.01            # Oxygen half-saturation constant [mmol/L]
-
-qO2_g_max = 2.20      # Max oxygen uptake on glycerol [mmol O2/(g biomass*h)]
-qO2_m_max = 1.70      # Max oxygen uptake on methanol [mmol O2/(g biomass*h)]
-
-kla = 450.0           # Volumetric oxygen-transfer coefficient [1/h]
+Y_p_m = 4.70
+K_g_repression = 0.10
+k_p = 0.005
 
 
-# Create output directory if it does not already exist
+# Oxygen model
 
-os.makedirs("Images", exist_ok=True)
+C_star = 0.20
+K_o = 0.01
+
+qO2_g_max = 2.20
+qO2_m_max = 1.70
 
 
-# Glycerol growth kinetics
+# Agitation and oxygen transfer
+
+rpm_ref = 600.0
+kla_ref = 450.0
+
+kla_rpm_exponent = 1.20
+
+rpm_min = 300.0
+rpm_max = 1200.0
+
+
+# PI dissolved-oxygen controller
+
+DO_setpoint = 30.0
+
+rpm_base = 300.0
+
+Kp = 150.0
+Ki = 10.0
+
+integral_limit = 1000.0
+
+
+# Initial conditions
+
+X0 = 0.10
+G0 = 40.0
+M0 = 0.0
+P0 = 0.0
+CL0 = C_star
+V0 = 2.0
+
+integral0 = 0.0
+
+
+# Simulation settings
+
+t_start = 0.0
+t_end = 120.0
+
+t_eval = np.linspace(
+    t_start,
+    t_end,
+    2401
+)
+
+
+# Output folder
+
+os.makedirs(
+    "Images",
+    exist_ok=True
+)
+
+
+# Glycerol growth
 
 def glycerol_growth(G):
 
     G = max(G, 0.0)
 
-    mu_g = mu_g_max * G / (K_g + G)
+    return (
+        mu_g_max
+        * G
+        / (K_g + G)
+    )
 
-    return mu_g
 
-
-# Methanol growth kinetics with substrate inhibition
+# Methanol growth
 
 def methanol_growth(M):
 
@@ -83,24 +132,32 @@ def methanol_growth(M):
     if M == 0.0:
         return 0.0
 
-    kinetic_term = M / (
-        K_m
-        + M
-        + M**2 / K_i_m
+    kinetic_term = (
+        M
+        / (
+            K_m
+            + M
+            + M**2 / K_i_m
+        )
     )
 
-    maximum_term = M_inhibition_peak / (
-        K_m
-        + M_inhibition_peak
-        + M_inhibition_peak**2 / K_i_m
+    maximum_term = (
+        M_inhibition_peak
+        / (
+            K_m
+            + M_inhibition_peak
+            + M_inhibition_peak**2 / K_i_m
+        )
     )
 
-    mu_m = mu_m_max * kinetic_term / maximum_term
+    return (
+        mu_m_max
+        * kinetic_term
+        / maximum_term
+    )
 
-    return mu_m
 
-
-# Glycerol feed strategy
+# Glycerol feed
 
 def glycerol_feed_rate(t, X, V):
 
@@ -110,34 +167,30 @@ def glycerol_feed_rate(t, X, V):
     if t >= t_glycerol_feed_end:
         return 0.0
 
-    F_g = (
+    return (
         mu_g_target
         * X
         * V
         / (Y_xg * G_feed)
     )
 
-    return F_g
 
-
-# Methanol feed strategy
+# Methanol feed
 
 def methanol_feed_rate(t, X, V):
 
     if t < t_methanol_start:
         return 0.0
 
-    F_m = (
+    return (
         mu_m_target
         * X
         * V
         / (Y_xm * M_feed)
     )
 
-    return F_m
 
-
-# Exendin-4 production model
+# Exendin-4 formation
 
 def product_rate(t, G, q_m):
 
@@ -146,82 +199,219 @@ def product_rate(t, G, q_m):
 
     G = max(G, 0.0)
 
-    glycerol_repression = 1.0 / (
-        1.0 + G / K_g_repression
+    glycerol_repression = (
+        1.0
+        / (
+            1.0
+            + G / K_g_repression
+        )
     )
 
-    q_p = (
+    return (
         Y_p_m
         * q_m
         * glycerol_repression
     )
 
-    return q_p
+
+# Agitation to kLa relationship
+
+def kla_from_rpm(rpm):
+
+    return (
+        kla_ref
+        * (
+            rpm / rpm_ref
+        )**kla_rpm_exponent
+    )
 
 
-# Complete bioreactor model
+# PI controller
+
+def controller_output(DO, integral_error):
+
+    error = (
+        DO_setpoint - DO
+    )
+
+    rpm_command = (
+        rpm_base
+        + Kp * error
+        + Ki * integral_error
+    )
+
+    rpm = np.clip(
+        rpm_command,
+        rpm_min,
+        rpm_max
+    )
+
+    return (
+        error,
+        rpm,
+        rpm_command
+    )
+
+
+# Complete reactor model
 
 def bioreactor_model(t, y):
 
-    X, G, M, P, CL, V = y
+    X, G, M, P, CL, V, integral_error = y
 
-    # Substrate-dependent growth rates before oxygen limitation
+    # Current dissolved oxygen
+
+    DO = (
+        100.0
+        * max(CL, 0.0)
+        / C_star
+    )
+
+    # PI control
+
+    error, rpm, rpm_command = controller_output(
+        DO,
+        integral_error
+    )
+
+    # Anti-windup
+
+    at_lower_limit = (
+        rpm <= rpm_min
+    )
+
+    at_upper_limit = (
+        rpm >= rpm_max
+    )
+
+    pushing_lower = (
+        error < 0.0
+    )
+
+    pushing_upper = (
+        error > 0.0
+    )
+
+    if (
+        at_lower_limit
+        and pushing_lower
+    ):
+        dintegraldt = 0.0
+
+    elif (
+        at_upper_limit
+        and pushing_upper
+    ):
+        dintegraldt = 0.0
+
+    elif (
+        integral_error >= integral_limit
+        and error > 0.0
+    ):
+        dintegraldt = 0.0
+
+    elif (
+        integral_error <= -integral_limit
+        and error < 0.0
+    ):
+        dintegraldt = 0.0
+
+    else:
+        dintegraldt = error
+
+    # Substrate-dependent growth
 
     mu_g_raw = glycerol_growth(G)
     mu_m_raw = methanol_growth(M)
 
     # Oxygen limitation
 
-    CL_physical = max(CL, 0.0)
+    CL_physical = max(
+        CL,
+        0.0
+    )
 
     oxygen_limitation = (
         CL_physical
-        / (K_o + CL_physical)
+        / (
+            K_o
+            + CL_physical
+        )
     )
 
-    mu_g = mu_g_raw * oxygen_limitation
-    mu_m = mu_m_raw * oxygen_limitation
+    mu_g = (
+        mu_g_raw
+        * oxygen_limitation
+    )
+
+    mu_m = (
+        mu_m_raw
+        * oxygen_limitation
+    )
 
     # Feed rates
 
-    F_g = glycerol_feed_rate(t, X, V)
-    F_m = methanol_feed_rate(t, X, V)
-
-    F_total = F_g + F_m
-
-    # Dilution rate
-
-    D = F_total / V
-
-    # Specific substrate uptake rates
-
-    q_g = mu_g / Y_xg
-    q_m = mu_m / Y_xm
-
-    # Product formation rate
-
-    q_p = product_rate(t, G, q_m)
-
-    # Oxygen uptake rate
-
-    glycerol_oxygen_fraction = 0.0
-    methanol_oxygen_fraction = 0.0
-
-    if mu_g_max > 0.0:
-        glycerol_oxygen_fraction = mu_g / mu_g_max
-
-    if mu_m_max > 0.0:
-        methanol_oxygen_fraction = mu_m / mu_m_max
-
-    OUR = X * (
-        qO2_g_max * glycerol_oxygen_fraction
-        + qO2_m_max * methanol_oxygen_fraction
+    F_g = glycerol_feed_rate(
+        t,
+        X,
+        V
     )
 
-    # Oxygen transfer rate
+    F_m = methanol_feed_rate(
+        t,
+        X,
+        V
+    )
 
-    OTR = kla * (
-        C_star - CL
+    F_total = (
+        F_g + F_m
+    )
+
+    D = (
+        F_total / V
+    )
+
+    # Substrate uptake
+
+    q_g = (
+        mu_g / Y_xg
+    )
+
+    q_m = (
+        mu_m / Y_xm
+    )
+
+    # Product formation
+
+    q_p = product_rate(
+        t,
+        G,
+        q_m
+    )
+
+    # Oxygen uptake
+
+    OUR = X * (
+        qO2_g_max
+        * mu_g
+        / mu_g_max
+        +
+        qO2_m_max
+        * mu_m
+        / mu_m_max
+    )
+
+    # Oxygen transfer
+
+    kla = kla_from_rpm(
+        rpm
+    )
+
+    OTR = (
+        kla
+        * (
+            C_star - CL
+        )
     )
 
     # Biomass balance
@@ -236,17 +426,25 @@ def bioreactor_model(t, y):
     # Glycerol balance
 
     dGdt = (
-        (F_g / V) * (G_feed - G)
-        - (F_m / V) * G
-        - q_g * X
+        (F_g / V)
+        * (G_feed - G)
+        -
+        (F_m / V)
+        * G
+        -
+        q_g * X
     )
 
     # Methanol balance
 
     dMdt = (
-        (F_m / V) * (M_feed - M)
-        - (F_g / V) * M
-        - q_m * X
+        (F_m / V)
+        * (M_feed - M)
+        -
+        (F_g / V)
+        * M
+        -
+        q_m * X
     )
 
     # Exendin-4 balance
@@ -260,13 +458,14 @@ def bioreactor_model(t, y):
     # Dissolved oxygen balance
 
     dCLdt = (
-        OTR
-        - OUR
+        OTR - OUR
     )
 
-    # Reactor volume balance
+    # Volume balance
 
-    dVdt = F_total
+    dVdt = (
+        F_total
+    )
 
     return [
         dXdt,
@@ -274,20 +473,12 @@ def bioreactor_model(t, y):
         dMdt,
         dPdt,
         dCLdt,
-        dVdt
+        dVdt,
+        dintegraldt
     ]
 
 
-# Initial conditions
-
-X0 = 0.10      # Biomass concentration [g/L]
-G0 = 40.0      # Glycerol concentration [g/L]
-M0 = 0.0       # Methanol concentration [g/L]
-P0 = 0.0       # Exendin-4 concentration [mg/L]
-
-CL0 = C_star   # Initially oxygen-saturated broth [mmol/L]
-
-V0 = 2.0       # Initial working volume [L]
+# Initial state
 
 y0 = [
     X0,
@@ -295,36 +486,26 @@ y0 = [
     M0,
     P0,
     CL0,
-    V0
+    V0,
+    integral0
 ]
 
 
-# Simulation settings
-
-t_start = 0.0
-t_end = 120.0
-
-t_eval = np.linspace(
-    t_start,
-    t_end,
-    1200
-)
-
-
-# Solve differential equations
+# Solve the process
 
 solution = solve_ivp(
     bioreactor_model,
     [t_start, t_end],
     y0,
     t_eval=t_eval,
+    method="BDF",
     rtol=1e-7,
     atol=1e-9,
-    max_step=0.1
+    max_step=0.05
 )
 
 
-# Extract state trajectories
+# Extract states
 
 time = solution.t
 
@@ -335,30 +516,77 @@ P = solution.y[3]
 CL = solution.y[4]
 V = solution.y[5]
 
+integral_error = solution.y[6]
 
-# Convert dissolved oxygen concentration to percent saturation
+
+# Dissolved oxygen
 
 DO = (
     100.0
-    * np.maximum(CL, 0.0)
+    * np.maximum(
+        CL,
+        0.0
+    )
     / C_star
 )
+
+
+# Reconstruct controller output
+
+error_profile = (
+    DO_setpoint - DO
+)
+
+rpm_command_profile = (
+    rpm_base
+    + Kp * error_profile
+    + Ki * integral_error
+)
+
+rpm_profile = np.clip(
+    rpm_command_profile,
+    rpm_min,
+    rpm_max
+)
+
+kla_profile = np.array([
+    kla_from_rpm(rpm)
+    for rpm in rpm_profile
+])
 
 
 # Reconstruct feed profiles
 
 F_g_profile = np.array([
-    glycerol_feed_rate(t, x, v)
-    for t, x, v in zip(time, X, V)
+    glycerol_feed_rate(
+        t,
+        x,
+        v
+    )
+    for t, x, v
+    in zip(
+        time,
+        X,
+        V
+    )
 ])
 
 F_m_profile = np.array([
-    methanol_feed_rate(t, x, v)
-    for t, x, v in zip(time, X, V)
+    methanol_feed_rate(
+        t,
+        x,
+        v
+    )
+    for t, x, v
+    in zip(
+        time,
+        X,
+        V
+    )
 ])
 
 
-# Reconstruct kinetic profiles
+# Reconstruct growth rates
 
 mu_g_raw_profile = np.array([
     glycerol_growth(g)
@@ -371,10 +599,16 @@ mu_m_raw_profile = np.array([
 ])
 
 oxygen_limitation_profile = (
-    np.maximum(CL, 0.0)
+    np.maximum(
+        CL,
+        0.0
+    )
     / (
         K_o
-        + np.maximum(CL, 0.0)
+        + np.maximum(
+            CL,
+            0.0
+        )
     )
 )
 
@@ -389,35 +623,35 @@ mu_m_profile = (
 )
 
 
-# Reconstruct oxygen uptake and transfer profiles
-
-glycerol_oxygen_fraction_profile = (
-    mu_g_profile / mu_g_max
-)
-
-methanol_oxygen_fraction_profile = (
-    mu_m_profile / mu_m_max
-)
+# Reconstruct oxygen rates
 
 OUR_profile = X * (
     qO2_g_max
-    * glycerol_oxygen_fraction_profile
+    * mu_g_profile
+    / mu_g_max
     +
     qO2_m_max
-    * methanol_oxygen_fraction_profile
+    * mu_m_profile
+    / mu_m_max
 )
 
-OTR_profile = kla * (
-    C_star - CL
+OTR_profile = (
+    kla_profile
+    * (
+        C_star - CL
+    )
 )
 
 
 # Mass calculations
 
-biomass_mass = X * V
-glycerol_mass = G * V
-methanol_mass = M * V
-product_mass = P * V
+biomass_mass = (
+    X * V
+)
+
+product_mass = (
+    P * V
+)
 
 glycerol_fed = np.trapezoid(
     F_g_profile * G_feed,
@@ -430,49 +664,167 @@ methanol_fed = np.trapezoid(
 )
 
 
-# Process summary calculations
+# Process summary
 
-minimum_DO = np.min(DO)
+print(
+    "\nPichia pastoris Exendin-4 "
+    "PI-controlled process"
+)
 
-minimum_DO_index = np.argmin(DO)
-minimum_DO_time = time[minimum_DO_index]
-
-maximum_OUR = np.max(OUR_profile)
-maximum_OTR = np.max(OTR_profile)
-
-
-# Print process summary
-
-print("\nPichia pastoris Exendin-4 process")
-
-print("\nSolver:")
-print("Successful:", solution.success)
+print(
+    "\nSolver successful:",
+    solution.success
+)
 
 print("\nFinal reactor state:")
-print(f"Biomass: {X[-1]:.2f} g/L")
-print(f"Glycerol: {G[-1]:.3f} g/L")
-print(f"Methanol: {M[-1]:.3f} g/L")
-print(f"Exendin-4 fusion protein: {P[-1]:.2f} mg/L")
-print(f"Dissolved oxygen: {DO[-1]:.1f} %")
-print(f"Volume: {V[-1]:.2f} L")
+
+print(
+    f"Biomass: "
+    f"{X[-1]:.2f} g/L"
+)
+
+print(
+    f"Glycerol: "
+    f"{G[-1]:.3f} g/L"
+)
+
+print(
+    f"Methanol: "
+    f"{M[-1]:.3f} g/L"
+)
+
+print(
+    f"Exendin-4 fusion protein: "
+    f"{P[-1]:.2f} mg/L"
+)
+
+print(
+    f"Dissolved oxygen: "
+    f"{DO[-1]:.1f} %"
+)
+
+print(
+    f"Agitation: "
+    f"{rpm_profile[-1]:.0f} rpm"
+)
+
+print(
+    f"Volume: "
+    f"{V[-1]:.2f} L"
+)
+
+
+print("\nController performance:")
+
+print(
+    f"Minimum DO: "
+    f"{np.min(DO):.1f} %"
+)
+
+print(
+    f"Maximum RPM: "
+    f"{np.max(rpm_profile):.0f} rpm"
+)
+
+print(
+    f"Minimum RPM: "
+    f"{np.min(rpm_profile):.0f} rpm"
+)
+
 
 print("\nProcess totals:")
-print(f"Final biomass mass: {biomass_mass[-1]:.2f} g")
-print(f"Final product mass: {product_mass[-1]:.2f} mg")
-print(f"Glycerol added: {glycerol_fed:.2f} g")
-print(f"Methanol added: {methanol_fed:.2f} g")
 
-print("\nMethanol:")
-print(f"Maximum methanol concentration: {np.max(M):.3f} g/L")
+print(
+    f"Final biomass mass: "
+    f"{biomass_mass[-1]:.2f} g"
+)
 
-print("\nOxygen:")
-print(f"Minimum dissolved oxygen: {minimum_DO:.1f} %")
-print(f"Minimum DO time: {minimum_DO_time:.1f} h")
-print(f"Maximum OUR: {maximum_OUR:.2f} mmol/(L*h)")
-print(f"Maximum OTR: {maximum_OTR:.2f} mmol/(L*h)")
+print(
+    f"Final product mass: "
+    f"{product_mass[-1]:.2f} mg"
+)
+
+print(
+    f"Glycerol added: "
+    f"{glycerol_fed:.2f} g"
+)
+
+print(
+    f"Methanol added: "
+    f"{methanol_fed:.2f} g"
+)
 
 
-# Plot biomass and glycerol
+# Dissolved oxygen control
+
+plt.figure()
+
+plt.plot(
+    time,
+    DO,
+    label="Dissolved oxygen"
+)
+
+plt.axhline(
+    DO_setpoint,
+    linestyle="--",
+    label="DO setpoint"
+)
+
+plt.axvline(
+    t_methanol_start,
+    linestyle=":",
+    label="Methanol induction"
+)
+
+plt.xlabel("Time [h]")
+plt.ylabel("DO [% saturation]")
+plt.title("PI Dissolved-Oxygen Control")
+
+plt.legend()
+plt.grid()
+
+plt.savefig(
+    "Images/PI_DO_control.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
+
+
+# Agitation response
+
+plt.figure()
+
+plt.plot(
+    time,
+    rpm_profile
+)
+
+plt.axhline(
+    rpm_max,
+    linestyle="--",
+    label="Maximum RPM"
+)
+
+plt.xlabel("Time [h]")
+plt.ylabel("Agitation [rpm]")
+plt.title("PI Agitation Response")
+
+plt.legend()
+plt.grid()
+
+plt.savefig(
+    "Images/PI_agitation.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
+
+
+# Biomass and glycerol
 
 plt.figure()
 
@@ -508,7 +860,7 @@ plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/pichia_growth_with_oxygen.png",
+    "Images/PI_growth.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -516,44 +868,7 @@ plt.savefig(
 plt.show()
 
 
-# Plot methanol concentration
-
-plt.figure()
-
-plt.plot(
-    time,
-    M
-)
-
-plt.axvline(
-    t_methanol_start,
-    linestyle="--",
-    label="Methanol induction"
-)
-
-plt.axhline(
-    M_inhibition_peak,
-    linestyle=":",
-    label="Methanol inhibition region"
-)
-
-plt.xlabel("Time [h]")
-plt.ylabel("Methanol [g/L]")
-plt.title("Methanol During AOX1 Induction")
-
-plt.legend()
-plt.grid()
-
-plt.savefig(
-    "Images/methanol_with_oxygen.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.show()
-
-
-# Plot Exendin-4 production
+# Exendin-4 production
 
 plt.figure()
 
@@ -576,7 +891,7 @@ plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/exendin4_with_oxygen.png",
+    "Images/PI_exendin4.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -584,44 +899,7 @@ plt.savefig(
 plt.show()
 
 
-# Plot dissolved oxygen
-
-plt.figure()
-
-plt.plot(
-    time,
-    DO
-)
-
-plt.axhline(
-    30.0,
-    linestyle="--",
-    label="30% DO target"
-)
-
-plt.axvline(
-    t_methanol_start,
-    linestyle=":",
-    label="Methanol induction"
-)
-
-plt.xlabel("Time [h]")
-plt.ylabel("Dissolved Oxygen [% saturation]")
-plt.title("Dissolved Oxygen Without Control")
-
-plt.legend()
-plt.grid()
-
-plt.savefig(
-    "Images/uncontrolled_DO.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.show()
-
-
-# Plot oxygen demand versus oxygen transfer
+# OUR and OTR
 
 plt.figure()
 
@@ -639,45 +917,13 @@ plt.plot(
 
 plt.xlabel("Time [h]")
 plt.ylabel("Oxygen Rate [mmol/(L*h)]")
-plt.title("Oxygen Uptake and Transfer")
+plt.title("Oxygen Demand and Transfer")
 
 plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/oxygen_transfer_vs_demand.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.show()
-
-
-# Plot feed strategy
-
-plt.figure()
-
-plt.plot(
-    time,
-    F_g_profile,
-    label="Glycerol feed"
-)
-
-plt.plot(
-    time,
-    F_m_profile,
-    label="Methanol feed"
-)
-
-plt.xlabel("Time [h]")
-plt.ylabel("Feed Rate [L/h]")
-plt.title("Fed-Batch Feed Strategy")
-
-plt.legend()
-plt.grid()
-
-plt.savefig(
-    "Images/feed_strategy_with_oxygen.png",
+    "Images/PI_oxygen_rates.png",
     dpi=300,
     bbox_inches="tight"
 )
