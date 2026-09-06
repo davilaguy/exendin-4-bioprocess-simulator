@@ -3,300 +3,362 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 
 
-# ============================================================
-# MODEL PARAMETERS
-# ============================================================
+# Literature-informed growth parameters
 
-mu_max = 0.40   # Maximum specific growth rate [1/h]
-K_s = 0.50      # Monod half-saturation constant [g/L]
-Y_xs = 0.50     # Biomass yield on substrate [g biomass/g substrate]
-k_d = 0.01      # Biomass decay coefficient [1/h]
+mu_g_max = 0.177      # Maximum growth rate on glycerol [1/h]
+mu_m_max = 0.070      # Representative Mut+ maximum growth rate on methanol [1/h]
 
-S_f = 200.0     # Substrate concentration in feed [g/L]
+Y_xg = 0.40           # Biomass yield on glycerol [g biomass/g glycerol]
+Y_xm = 0.55           # Biomass yield on methanol [g biomass/g methanol]
 
+G_feed = 1260.0       # Glycerol feed concentration [g/L]
+M_feed = 792.0        # Approximate pure methanol concentration [g/L]
 
-# ============================================================
-# FEED STRATEGY PARAMETERS
-# ============================================================
-
-t_feed = 12.0       # Feed start time [h]
-mu_target = 0.20    # Target specific growth rate [1/h]
+k_d = 0.01            # Biomass decay coefficient [1/h]
 
 
-# ============================================================
-# PRODUCT FORMATION PARAMETERS
-# ============================================================
+# Provisional kinetic parameters
 
-t_induction = 18.0  # Peptide-production induction time [h]
+K_g = 0.50            # Glycerol half-saturation constant [g/L]
 
-alpha = 0.20        # Growth-associated coefficient [mg product/g biomass]
-beta = 0.05         # Non-growth-associated production [mg/(g biomass*h)]
+K_m = 0.10            # Methanol kinetic constant [g/L]
+M_inhibition_peak = 3.65   # Methanol concentration where inhibition becomes important [g/L]
 
-k_p = 0.01          # Product degradation coefficient [1/h]
+K_i_m = M_inhibition_peak**2 / K_m
+
+# Oxygen transfer
+
+C_star = 0.20          # Oxygen saturation concentration [mmol/L]
+
+qO2_g = 2.2            # Oxygen demand on glycerol [mmol O2/(g*h)]
+qO2_m = 1.7            # Oxygen demand on methanol [mmol O2/(g*h)]
+
+kla = 450.0            # Volumetric oxygen-transfer coefficient [1/h]
+K_o = 0.01
+
+# Process schedule
+
+t_glycerol_feed_start = 32.0
+t_glycerol_feed_end = 46.0
+
+t_methanol_start = 48.0
+
+mu_g_target = 0.14
+mu_m_target = 0.015
 
 
-# ============================================================
-# KINETICS
-# ============================================================
+# Product parameters
 
-def monod_growth(S, mu_max, K_s):
-    mu = mu_max * S / (K_s + S)
-    return mu
+Y_p_m = 4.70          # Product yield factor [mg product/g methanol]
+K_g_repression = 0.10 # Glycerol repression parameter [g/L]
+k_p = 0.005           # Product degradation coefficient [1/h]
 
 
-# ============================================================
-# FEED STRATEGY
-# ============================================================
+# Growth kinetics
 
-def feed_rate(t, X, V):
+def glycerol_growth(G):
 
-    # Initial batch phase
-    if t < t_feed:
+    G = max(G, 0.0)
+
+    mu_g = mu_g_max * G / (K_g + G)
+
+    return mu_g
+
+
+def methanol_growth(M):
+
+    M = max(M, 0.0)
+
+    if M == 0:
         return 0.0
 
-    # Model-based feed designed around target growth rate
-    F = (mu_target * X * V) / (Y_xs * S_f)
+    kinetic_term = M / (
+        K_m
+        + M
+        + M**2 / K_i_m
+    )
 
-    return F
+    max_kinetic_term = M_inhibition_peak / (
+        K_m
+        + M_inhibition_peak
+        + M_inhibition_peak**2 / K_i_m
+    )
+
+    mu_m = mu_m_max * kinetic_term / max_kinetic_term
+
+    return mu_m
 
 
-# ============================================================
-# PRODUCT FORMATION
-# ============================================================
+# Feed strategies
 
-def product_rate(t, mu):
+def glycerol_feed_rate(t, X, V):
 
-    # No recombinant peptide production before induction
-    if t < t_induction:
+    if t < t_glycerol_feed_start:
         return 0.0
 
-    # Luedeking-Piret-type production model
-    q_p = alpha * mu + beta
+    if t >= t_glycerol_feed_end:
+        return 0.0
+
+    F_g = (
+        mu_g_target
+        * X
+        * V
+        / (Y_xg * G_feed)
+    )
+
+    return F_g
+
+
+def methanol_feed_rate(t, X, V):
+
+    if t < t_methanol_start:
+        return 0.0
+
+    F_m = (
+        mu_m_target
+        * X
+        * V
+        / (Y_xm * M_feed)
+    )
+
+    return F_m
+
+
+# Exendin-4 production
+
+def product_rate(t, G, mu_m):
+
+    if t < t_methanol_start:
+        return 0.0
+
+    G = max(G, 0.0)
+
+    q_m = mu_m / Y_xm
+
+    glycerol_repression = 1.0 / (
+        1.0 + G / K_g_repression
+    )
+
+    q_p = (
+        Y_p_m
+        * q_m
+        * glycerol_repression
+    )
 
     return q_p
 
 
-# ============================================================
-# FED-BATCH BIOREACTOR MODEL
-# ============================================================
+# Bioreactor model
 
-def fed_batch_model(t, y):
+def bioreactor_model(t, y):
 
-    X, S, P, V = y
+    X, G, M, P, CL, V = y
 
-    # Microbial growth
-    mu = monod_growth(S, mu_max, K_s)
+    mu_g = glycerol_growth(G)
+    mu_m = methanol_growth(M)
 
-    # Feed rate
-    F = feed_rate(t, X, V)
+    F_g = glycerol_feed_rate(t, X, V)
+    F_m = methanol_feed_rate(t, X, V)
 
-    # Dilution rate
-    D = F / V
+    F_total = F_g + F_m
+    D = F_total / V
 
-    # Specific product formation rate
-    q_p = product_rate(t, mu)
+    q_g = mu_g / Y_xg
+    q_m = mu_m / Y_xm
 
-    # Biomass balance
-    dXdt = (mu - k_d - D) * X
+    q_p = product_rate(t, G, mu_m)
 
-    # Substrate balance
-    dSdt = (
-        D * (S_f - S)
-        - (mu * X) / Y_xs
+    OUR = X * (
+    qO2_g * mu_g / mu_g_max
+    + qO2_m * mu_m / mu_m_max
     )
 
-    # Therapeutic peptide balance
+    OTR = kla * (C_star - CL)
+    dCLdt = OTR - OUR
+
+    dXdt = (
+        mu_g
+        + mu_m
+        - k_d
+        - D
+    ) * X
+
+    dGdt = (
+        (F_g / V) * (G_feed - G)
+        - (F_m / V) * G
+        - q_g * X
+    )
+
+    dMdt = (
+        (F_m / V) * (M_feed - M)
+        - (F_g / V) * M
+        - q_m * X
+    )
+
     dPdt = (
         q_p * X
         - D * P
         - k_p * P
     )
 
-    # Reactor volume balance
-    dVdt = F
+    dVdt = F_total
 
-    return [dXdt, dSdt, dPdt, dVdt]
-
-
-# ============================================================
-# INITIAL CONDITIONS
-# ============================================================
-
-X0 = 0.10      # Initial biomass concentration [g/L]
-S0 = 20.0      # Initial substrate concentration [g/L]
-P0 = 0.0       # Initial product concentration [mg/L]
-V0 = 2.0       # Initial reactor volume [L]
-
-y0 = [X0, S0, P0, V0]
+    return [
+        dXdt,
+        dGdt,
+        dMdt,
+        dPdt,
+        dVdt
+    ]
 
 
-# ============================================================
-# SIMULATION SETTINGS
-# ============================================================
+# Initial conditions
+
+X0 = 0.10      # Biomass [g/L]
+G0 = 40.0      # Glycerol [g/L]
+M0 = 0.0       # Methanol [g/L]
+P0 = 0.0       # Exendin-4 fusion protein [mg/L]
+V0 = 2.0       # Working volume [L]
+CL0 = C_star
+
+y0 = [
+    X0,
+    G0,
+    M0,
+    P0,
+    CL0,
+    V0
+]
+
+# Simulation settings
 
 t_start = 0.0
-t_end = 30.0
+t_end = 120.0
 
-t_eval = np.linspace(t_start, t_end, 500)
+t_eval = np.linspace(
+    t_start,
+    t_end,
+    1200
+)
 
 
-# ============================================================
-# SOLVE DIFFERENTIAL EQUATIONS
-# ============================================================
+# Solve model
 
 solution = solve_ivp(
-    fed_batch_model,
+    bioreactor_model,
     [t_start, t_end],
     y0,
     t_eval=t_eval,
     rtol=1e-7,
-    atol=1e-9
+    atol=1e-9,
+    max_step=0.1
 )
 
 
-# ============================================================
-# EXTRACT RESULTS
-# ============================================================
+# Extract results
 
 time = solution.t
 
 X = solution.y[0]
-S = solution.y[1]
-P = solution.y[2]
-V = solution.y[3]
+G = solution.y[1]
+M = solution.y[2]
+P = solution.y[3]
+V = solution.y[4]
 
 
-# ============================================================
-# RECONSTRUCT OPERATING PROFILES
-# ============================================================
+# Reconstruct feed and kinetic profiles
 
-F_profile = np.array([
-    feed_rate(t, x, v)
+F_g_profile = np.array([
+    glycerol_feed_rate(t, x, v)
     for t, x, v in zip(time, X, V)
 ])
 
-D_profile = F_profile / V
+F_m_profile = np.array([
+    methanol_feed_rate(t, x, v)
+    for t, x, v in zip(time, X, V)
+])
 
+mu_g_profile = np.array([
+    glycerol_growth(g)
+    for g in G
+])
 
-mu_profile = np.array([
-    monod_growth(s, mu_max, K_s)
-    for s in S
+mu_m_profile = np.array([
+    methanol_growth(m)
+    for m in M
 ])
 
 
-q_p_profile = np.array([
-    product_rate(t, mu)
-    for t, mu in zip(time, mu_profile)
-])
-
-
-# ============================================================
-# MASS CALCULATIONS
-# ============================================================
+# Mass calculations
 
 biomass_mass = X * V
-substrate_mass = S * V
-
-# P is mg/L and V is L, therefore product mass is mg
+glycerol_mass = G * V
+methanol_mass = M * V
 product_mass = P * V
 
-initial_biomass_mass = X0 * V0
-initial_substrate_mass = S0 * V0
-
-feed_substrate_mass = np.trapezoid(
-    F_profile * S_f,
+glycerol_fed = np.trapezoid(
+    F_g_profile * G_feed,
     time
 )
 
-total_substrate_supplied = (
-    initial_substrate_mass
-    + feed_substrate_mass
-)
-
-substrate_consumed = (
-    total_substrate_supplied
-    - substrate_mass[-1]
+methanol_fed = np.trapezoid(
+    F_m_profile * M_feed,
+    time
 )
 
 
-# ============================================================
-# PRODUCTIVITY METRICS
-# ============================================================
+# Process summary
 
-final_product_mass = product_mass[-1]
+print("\nPichia pastoris Exendin-4 process")
 
-overall_productivity = (
-    final_product_mass / t_end
-)
-
-production_time = (
-    t_end - t_induction
-)
-
-production_phase_productivity = (
-    final_product_mass / production_time
-)
-
-
-# ============================================================
-# PROCESS SUMMARY
-# ============================================================
-
-print("\n--- VENOM-DERIVED PEPTIDE BIOPROCESS ---")
-
-print("Solver successful:", solution.success)
+print("\nSolver:")
+print("Successful:", solution.success)
 
 print("\nFinal reactor state:")
-print(f"Biomass concentration: {X[-1]:.2f} g/L")
-print(f"Substrate concentration: {S[-1]:.3f} g/L")
-print(f"Peptide concentration: {P[-1]:.2f} mg/L")
-print(f"Reactor volume: {V[-1]:.2f} L")
+print(f"Biomass: {X[-1]:.2f} g/L")
+print(f"Glycerol: {G[-1]:.3f} g/L")
+print(f"Methanol: {M[-1]:.3f} g/L")
+print(f"Exendin-4 fusion protein: {P[-1]:.2f} mg/L")
+print(f"Volume: {V[-1]:.2f} L")
 
-print("\nBiomass and substrate:")
+print("\nProcess totals:")
 print(f"Final biomass mass: {biomass_mass[-1]:.2f} g")
-print(f"Substrate supplied: {total_substrate_supplied:.2f} g")
-print(f"Substrate consumed: {substrate_consumed:.2f} g")
+print(f"Final product mass: {product_mass[-1]:.2f} mg")
+print(f"Glycerol added: {glycerol_fed:.2f} g")
+print(f"Methanol added: {methanol_fed:.2f} g")
 
-print("\nTherapeutic peptide:")
-print(f"Induction time: {t_induction:.1f} h")
-print(f"Final peptide mass: {final_product_mass:.2f} mg")
-print(f"Overall productivity: {overall_productivity:.2f} mg/h")
-print(
-    f"Production-phase productivity: "
-    f"{production_phase_productivity:.2f} mg/h"
-)
+print("\nMethanol:")
+print(f"Maximum methanol concentration: {np.max(M):.3f} g/L")
 
 
-# ============================================================
-# BIOMASS AND SUBSTRATE PLOT
-# ============================================================
+# Biomass and glycerol
 
 plt.figure()
 
-plt.plot(time, X, label="Biomass, X")
-plt.plot(time, S, label="Substrate, S")
+plt.plot(time, X, label="Biomass")
+plt.plot(time, G, label="Glycerol")
 
 plt.axvline(
-    t_feed,
+    t_glycerol_feed_start,
     linestyle="--",
-    label="Feed start"
+    label="Glycerol feed start"
 )
 
 plt.axvline(
-    t_induction,
+    t_methanol_start,
     linestyle=":",
-    label="Induction"
+    label="Methanol induction"
 )
 
 plt.xlabel("Time [h]")
 plt.ylabel("Concentration [g/L]")
-plt.title("Fed-Batch Biomass and Substrate")
+plt.title("Pichia pastoris Growth")
 
 plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/biomass_substrate_induction.png",
+    "Images/pichia_growth.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -304,29 +366,61 @@ plt.savefig(
 plt.show()
 
 
-# ============================================================
-# THERAPEUTIC PEPTIDE PLOT
-# ============================================================
+# Methanol concentration
+
+plt.figure()
+
+plt.plot(time, M)
+
+plt.axvline(
+    t_methanol_start,
+    linestyle="--",
+    label="Methanol induction"
+)
+
+plt.axhline(
+    M_inhibition_peak,
+    linestyle=":",
+    label="Inhibition threshold"
+)
+
+plt.xlabel("Time [h]")
+plt.ylabel("Methanol [g/L]")
+plt.title("Methanol During AOX1 Induction")
+
+plt.legend()
+plt.grid()
+
+plt.savefig(
+    "Images/methanol_profile.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
+
+
+# Exendin-4 production
 
 plt.figure()
 
 plt.plot(time, P)
 
 plt.axvline(
-    t_induction,
+    t_methanol_start,
     linestyle="--",
-    label="Induction"
+    label="Methanol induction"
 )
 
 plt.xlabel("Time [h]")
-plt.ylabel("Peptide Concentration [mg/L]")
-plt.title("Recombinant Therapeutic Peptide Production")
+plt.ylabel("Fusion Protein [mg/L]")
+plt.title("Recombinant Exendin-4 Production")
 
 plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/therapeutic_peptide_production.png",
+    "Images/exendin4_production.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -334,27 +428,31 @@ plt.savefig(
 plt.show()
 
 
-# ============================================================
-# FEED PROFILE
-# ============================================================
+# Feed rates
 
 plt.figure()
 
-plt.plot(time, F_profile)
+plt.plot(
+    time,
+    F_g_profile,
+    label="Glycerol feed"
+)
 
-plt.axvline(
-    t_feed,
-    linestyle="--"
+plt.plot(
+    time,
+    F_m_profile,
+    label="Methanol feed"
 )
 
 plt.xlabel("Time [h]")
 plt.ylabel("Feed Rate [L/h]")
-plt.title("Model-Based Feed Profile")
+plt.title("Fed-Batch Feed Strategy")
 
+plt.legend()
 plt.grid()
 
 plt.savefig(
-    "Images/model_based_feed.png",
+    "Images/feed_strategy.png",
     dpi=300,
     bbox_inches="tight"
 )
