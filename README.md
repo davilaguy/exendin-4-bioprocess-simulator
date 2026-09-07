@@ -32,16 +32,7 @@ The goal of this project is not to claim that recombinant production automatical
 ---
 ## Process Overview
 
-```mermaid
-flowchart LR
-    B1["1. Glycerol batch<br/>Build biomass"]
-    B2["2. Glycerol fed-batch<br/>Increase cell density"]
-    B3["3. Transition<br/>Remove residual glycerol"]
-    B4["4. Methanol induction<br/>Activate AOX1 expression"]
-    B5["5. Exendin-4 production"]
-
-    B1 --> B2 --> B3 --> B4 --> B5
-```
+![Exendin-4 bioprocess overview](Images/Diagram.png)
 ---
 
 ## Model
