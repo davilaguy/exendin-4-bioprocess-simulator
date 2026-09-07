@@ -31,21 +31,35 @@ The goal of this project is not to claim that recombinant production automatical
 
 ---
 
-## Process
+```markdown
+## Process Overview
 
 ```mermaid
 flowchart LR
-    A[Glycerol batch] --> B[Glycerol fed-batch]
-    B --> C[Transition]
-    C --> D[Methanol induction]
-    D --> E[Exendin-4 production]
 
-    F[Dissolved O2] --> G[PI controller]
-    G --> H[Agitation]
-    H --> I[kLa]
-    I --> J[Oxygen transfer]
-    J --> F
-```
+    subgraph BIO["Bioprocess"]
+        A["1. Glycerol batch<br/>Build biomass"]
+        B["2. Glycerol fed-batch<br/>Increase cell density"]
+        C["3. Transition<br/>Deplete residual glycerol"]
+        D["4. Methanol induction<br/>Activate AOX1 expression"]
+        E["5. Exendin-4 production"]
+
+        A --> B --> C --> D --> E
+    end
+
+    subgraph CTRL["Dissolved-Oxygen Control"]
+        F["Dissolved O₂<br/>DO sensor"]
+        G["PI controller"]
+        H["Agitation<br/>RPM"]
+        I["Oxygen-transfer capacity<br/>kLa"]
+        J["Oxygen transfer<br/>OTR"]
+
+        F -->|"DO below setpoint"| G
+        G -->|"RPM command"| H
+        H -->|"changes mixing"| I
+        I -->|"controls O₂ transfer rate"| J
+        J -->|"changes dissolved O₂"| F
+    end
 
 The model tracks:
 
