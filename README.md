@@ -5,6 +5,7 @@
 ### Exendin-4 Bioprocess Simulator v1.0
 
 Dynamic fed-batch modeling of recombinant Exendin-4 production in *Pichia pastoris*, with oxygen-transfer limitations and closed-loop dissolved-oxygen control.
+[Launch Interactive Simulator](https://exendin-4-bioprocess-simulator.streamlit.app/)
 
 **Python · SciPy · Streamlit · Bioprocess Engineering · Process Control**
 
