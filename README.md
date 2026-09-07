@@ -227,17 +227,11 @@ Parameters taken from other *P. pastoris* processes are treated as representativ
 
 ## Limitations
 
-This is a reduced-order engineering simulator, not a validated pharmaceutical manufacturing model.
-
-It currently does **not** include:
-
 - pH or temperature dynamics
 - airflow or oxygen enrichment control
 - detailed intracellular metabolism
 - product-quality attributes
 - downstream purification
-- sensor noise or delay
-- manufacturing cost
 - regulatory constraints
 
 A particularly relevant future extension would be a **cost-of-goods model** connecting titre, productivity, oxygen demand, purification yield, and batch time to manufacturing cost.
