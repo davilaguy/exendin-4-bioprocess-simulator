@@ -30,48 +30,38 @@ The goal of this project is not to claim that recombinant production automatical
 [Read the research essay that motivated this project](docs/A_Deadly_Cure.pdf)
 
 ---
-
-```markdown
 ## Process Overview
 
 ```mermaid
-flowchart LR
+flowchart TB
 
     subgraph BIO["Bioprocess"]
-        A["1. Glycerol batch<br/>Build biomass"]
-        B["2. Glycerol fed-batch<br/>Increase cell density"]
-        C["3. Transition<br/>Deplete residual glycerol"]
-        D["4. Methanol induction<br/>Activate AOX1 expression"]
-        E["5. Exendin-4 production"]
+        direction LR
 
-        A --> B --> C --> D --> E
+        B1["1. Glycerol batch"]
+        B2["2. Glycerol fed-batch"]
+        B3["3. Transition"]
+        B4["4. Methanol induction"]
+        B5["5. Exendin-4 production"]
+
+        B1 --> B2 --> B3 --> B4 --> B5
     end
 
     subgraph CTRL["Dissolved-Oxygen Control"]
-        F["Dissolved O₂<br/>DO sensor"]
-        G["PI controller"]
-        H["Agitation<br/>RPM"]
-        I["Oxygen-transfer capacity<br/>kLa"]
-        J["Oxygen transfer<br/>OTR"]
+        direction LR
 
-        F -->|"DO below setpoint"| G
-        G -->|"RPM command"| H
-        H -->|"changes mixing"| I
-        I -->|"controls O₂ transfer rate"| J
-        J -->|"changes dissolved O₂"| F
+        C1["Dissolved oxygen (DO)"]
+        C2["PI controller"]
+        C3["Agitation speed (RPM)"]
+        C4["Oxygen-transfer capacity (kLa)"]
+        C5["Oxygen transfer rate (OTR)"]
+
+        C1 -->|"Below setpoint"| C2
+        C2 -->|"RPM command"| C3
+        C3 -->|"Changes mixing"| C4
+        C4 -->|"Determines OTR"| C5
+        C5 -->|"Changes DO"| C1
     end
-
-The model tracks:
-
-| State | Description |
-|---|---|
-| $X$ | Biomass concentration |
-| $G$ | Glycerol concentration |
-| $M$ | Methanol concentration |
-| $P$ | Exendin-4 fusion-protein concentration |
-| $C_L$ | Dissolved oxygen |
-| $V$ | Reactor volume |
-
 ---
 
 ## Model
