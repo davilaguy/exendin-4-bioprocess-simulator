@@ -16,9 +16,9 @@ Dynamic fed-batch modeling of recombinant Exendin-4 production in *Pichia pastor
 
 ## Why I Built This
 
-Venom-derived molecules have led to important therapeutics, but direct venom collection presents challenges in animal welfare, supply, reproducibility, and scale-up.
+Venom-derived molecules have led to important therapeutics in medicine, but direct venom collection from animals presents challenges in welfare, supply, reproducibility, and scale-up.
 
-This project grew out of my research into venom-derived medicines and asks an engineering question:
+Moreover, after writing a research paper on this topic, I began this project after asking the question:
 
 > **How could recombinant biomanufacturing help produce a venom-derived therapeutic peptide without relying on direct venom extraction?**
 
