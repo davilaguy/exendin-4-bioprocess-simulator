@@ -2,7 +2,7 @@
 
 # Venom-to-Therapeutic
 
-### Exendin-4 Bioprocess Simulator
+### Exendin-4 Bioprocess Simulator v1.0
 
 Dynamic fed-batch modeling of recombinant Exendin-4 production in *Pichia pastoris*, with oxygen-transfer limitations and closed-loop dissolved-oxygen control.
 
